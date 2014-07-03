@@ -4,83 +4,42 @@ package dictzip
 import (
 	"compress/flate"
 	"fmt"
-	"os"
-	"runtime"
+	"io"
+	"sync"
 )
 
 type Reader struct {
-	fp        *os.File
+	fp        io.ReadSeeker
 	offsets   []int64
 	blocksize int64
-	opened    bool
+	lock      sync.Mutex
 }
 
-func (dz *Reader) Close() error {
-	if dz.opened {
-		dz.opened = false
-		return dz.fp.Close()
-	}
-	return nil
-}
+func NewReader(fp io.ReadSeeker) (*Reader, error) {
 
-func (dz *Reader) GetB64(start, size string) ([]byte, error) {
-	start2, err := decode(start)
+	dz := &Reader{fp: fp}
+
+	_, err := dz.fp.Seek(0, 0)
 	if err != nil {
 		return nil, err
 	}
-	size2, err := decode(size)
-	if err != nil {
-		return nil, err
-	}
-	return dz.Get(start2, size2)
-}
-
-func (dz *Reader) Get(start, size int64) ([]byte, error) {
-
-	start1 := dz.blocksize * (start / dz.blocksize)
-	size1 := size + (start - start1)
-
-	dz.fp.Seek(dz.offsets[start/dz.blocksize], os.SEEK_SET)
-	rd := flate.NewReader(dz.fp)
-	data := make([]byte, size1)
-	n, err := rd.Read(data)
-	if err != nil {
-		return nil, err
-	}
-	data = data[:n]
-	return data[start-start1:], nil
-}
-
-func NewReader(filename string) (*Reader, error) {
-
-	dz := &Reader{}
 
 	metadata := []byte{}
-
-	var err error
-	dz.fp, err = os.Open(filename)
-	if err != nil {
-		return nil, err
-	}
-	dz.opened = true
 
 	p := 0
 
 	h := make([]byte, 10)
-	n, err := dz.fp.Read(h)
+	n, err := readfull(dz.fp, h)
 	if err != nil {
-		dz.fp.Close()
 		return nil, err
 	}
 	p += n
 
 	if h[0] != 31 || h[1] != 139 {
-		dz.fp.Close()
 		return nil, fmt.Errorf("Invalid header: %02X %02X\n", h[0], h[1])
 	}
 
 	if h[2] != 8 {
-		dz.fp.Close()
 		return nil, fmt.Errorf("Unknown compression method:", h[2])
 	}
 
@@ -88,18 +47,16 @@ func NewReader(filename string) (*Reader, error) {
 
 	if flg&4 != 0 {
 		h := make([]byte, 2)
-		n, err := dz.fp.Read(h)
+		n, err := readfull(dz.fp, h)
 		if err != nil {
-			dz.fp.Close()
 			return nil, err
 		}
 		p += n
 
 		xlen := int(h[0]) + 256*int(h[1])
 		h = make([]byte, xlen)
-		n, err = dz.fp.Read(h)
+		n, err = readfull(dz.fp, h)
 		if err != nil {
-			dz.fp.Close()
 			return nil, err
 		}
 		p += n
@@ -123,9 +80,8 @@ func NewReader(filename string) (*Reader, error) {
 		if flg&f != 0 {
 			h := make([]byte, 1)
 			for {
-				n, err := dz.fp.Read(h)
+				n, err := readfull(dz.fp, h)
 				if err != nil {
-					dz.fp.Close()
 					return nil, err
 				}
 				p += n
@@ -138,23 +94,20 @@ func NewReader(filename string) (*Reader, error) {
 
 	if flg&2 != 0 {
 		h := make([]byte, 2)
-		n, err := dz.fp.Read(h)
+		n, err := readfull(dz.fp, h)
 		if err != nil {
-			dz.fp.Close()
 			return nil, err
 		}
 		p += n
 	}
 
 	if len(metadata) < 6 {
-		dz.fp.Close()
 		return nil, fmt.Errorf("Missing dictzip metadata")
 	}
 
 	version := int(metadata[0]) + 256*int(metadata[1])
 
 	if version != 1 {
-		dz.fp.Close()
 		return nil, fmt.Errorf("Unknown dictzip version:", version)
 	}
 
@@ -167,10 +120,59 @@ func NewReader(filename string) (*Reader, error) {
 		dz.offsets[i+1] = dz.offsets[i] + int64(metadata[6+2*i]) + 256*int64(metadata[7+2*i])
 	}
 
-	runtime.SetFinalizer(dz, (*Reader).Close)
-
 	return dz, nil
 
+}
+
+func (dz *Reader) Get(start, size int64) ([]byte, error) {
+
+	dz.lock.Lock()
+	defer dz.lock.Unlock()
+
+	start1 := dz.blocksize * (start / dz.blocksize)
+	size1 := size + (start - start1)
+
+	_, err := dz.fp.Seek(dz.offsets[start/dz.blocksize], 0)
+	if err != nil {
+		return nil, err
+	}
+	rd := flate.NewReader(dz.fp)
+
+	data := make([]byte, size1)
+	_, err = readfull(rd, data)
+	if err != nil {
+		return nil, err
+	}
+	return data[start-start1:], nil
+}
+
+// Using start and size in base64 notation, such as used by the dictunzip program.
+func (dz *Reader) GetB64(start, size string) ([]byte, error) {
+	start2, err := decode(start)
+	if err != nil {
+		return nil, err
+	}
+	size2, err := decode(size)
+	if err != nil {
+		return nil, err
+	}
+	return dz.Get(start2, size2)
+}
+
+func readfull(fp io.Reader, buf []byte) (int, error) {
+	ln := len(buf)
+	for p := 0; p < ln; {
+		n, err := fp.Read(buf[p:])
+		p += n
+		if err != nil {
+			if err != io.EOF || p < ln {
+				return p, err
+			} else {
+				return p, nil
+			}
+		}
+	}
+	return ln, nil
 }
 
 ////////////////////////////////////////////////////////////////
