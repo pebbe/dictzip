@@ -1,5 +1,4 @@
-
-A Go random access reader for files in the dictzip format.
+A Go reader and writer for files in the random access `dictzip` format.
 
 ## Docs
 
