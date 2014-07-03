@@ -1,5 +1,5 @@
 /*
-A Go reader and writer for files in the random access `dictzip` format.
+Package dictzip provides a reader and writer for files in the random access `dictzip` format.
 */
 package dictzip
 
