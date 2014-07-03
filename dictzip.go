@@ -1,12 +1,124 @@
-// A Go random access reader for files in the dictzip format.
+/*
+A Go reader and writer for files in the random access `dictzip` format.
+*/
 package dictzip
 
+//. Imports
+
 import (
+	"bytes"
 	"compress/flate"
 	"fmt"
+	"hash/crc32"
 	"io"
+	"os"
 	"sync"
+	"time"
 )
+
+//. Writer
+
+/*
+Levels range from 1 (BestSpeed) to 9 (BestCompression), Level 0 (NoCompression), -1 (DefaultCompression)
+*/
+func Write(r io.Reader, filename string, level int) error {
+
+	const blocksize = 58315
+
+	crc := crc32.NewIEEE()
+	isize := 0
+
+	var buf bytes.Buffer
+	fw, err := flate.NewWriter(&buf, level)
+	if err != nil {
+		return err
+	}
+	sizes := make([]int, 0)
+	b := make([]byte, blocksize)
+	total := 0
+	eof := false
+	for !eof {
+		n, err := readfull(r, b)
+		if err != nil {
+			if err != io.EOF {
+				return err
+			} else {
+				eof = true
+			}
+		}
+		if n > 0 {
+			crc.Write(b[:n])
+			isize += n
+
+			fw.Write(b[:n])
+			fw.Flush()
+			fw.Reset(&buf)
+
+			l := buf.Len()
+			sizes = append(sizes, l-total)
+			total = l
+		}
+	}
+	fw.Close()
+
+	fp, err := os.Create(filename)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
+
+	xfl := byte(0)
+	if level == flate.BestCompression {
+		xfl = 2
+	} else if level == flate.BestSpeed {
+		xfl = 4
+	}
+	now := time.Now().Unix()
+	_, err = fp.Write([]byte{
+		31, 139, 8, 4,
+		byte(now & 255), byte((now >> 8) & 255), byte((now >> 16) & 255), byte((now >> 24) & 255),
+		xfl, 255})
+	if err != nil {
+		return err
+	}
+
+	xlen := 10 + 2*len(sizes)
+	ln := 6 + 2*len(sizes)
+	_, err = fp.Write([]byte{
+		byte(xlen & 255), byte((xlen >> 8) & 255),
+		'R', 'A', byte(ln & 255), byte((ln >> 8) & 255),
+		1, 0,
+		byte(blocksize & 255), byte((blocksize >> 8) & 255),
+		byte(len(sizes) & 255), byte((len(sizes) >> 8) & 255)})
+	if err != nil {
+		return err
+	}
+	for _, o := range sizes {
+		_, err = fp.Write([]byte{byte(o & 255), byte((o >> 8) & 255)})
+		if err != nil {
+			return err
+		}
+	}
+
+	_, err = fp.Write(buf.Bytes())
+	if err != nil {
+		return err
+	}
+
+	c := crc.Sum32()
+	_, err = fp.Write([]byte{
+		byte(c & 255), byte((c >> 8) & 255), byte((c >> 16) & 255), byte((c >> 24) & 255),
+		byte(isize & 255), byte((isize >> 8) & 255), byte((isize >> 16) & 255), byte((isize >> 24) & 255),
+	})
+	if err != nil {
+		return err
+	}
+
+	return nil
+
+}
+
+//. Reader
 
 type Reader struct {
 	fp        io.ReadSeeker
@@ -15,9 +127,9 @@ type Reader struct {
 	lock      sync.Mutex
 }
 
-func NewReader(fp io.ReadSeeker) (*Reader, error) {
+func NewReader(rs io.ReadSeeker) (*Reader, error) {
 
-	dz := &Reader{fp: fp}
+	dz := &Reader{fp: rs}
 
 	_, err := dz.fp.Seek(0, 0)
 	if err != nil {
@@ -143,6 +255,7 @@ func (dz *Reader) Get(start, size int64) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+
 	return data[start-start1:], nil
 }
 
@@ -158,6 +271,8 @@ func (dz *Reader) GetB64(start, size string) ([]byte, error) {
 	}
 	return dz.Get(start2, size2)
 }
+
+//. Helper function
 
 func readfull(fp io.Reader, buf []byte) (int, error) {
 	ln := len(buf)
@@ -175,7 +290,7 @@ func readfull(fp io.Reader, buf []byte) (int, error) {
 	return ln, nil
 }
 
-////////////////////////////////////////////////////////////////
+//. Base64 decoder
 
 var (
 	list = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
