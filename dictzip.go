@@ -271,7 +271,7 @@ func (dz *Reader) Get(start, size int64) ([]byte, error) {
 	return data[start-start1:], nil
 }
 
-// Start and size in base64 notation, such as used by the dictunzip program.
+// Start and size in base64 notation, such as used by the `dictunzip` program.
 func (dz *Reader) GetB64(start, size string) ([]byte, error) {
 	start2, err := decode(start)
 	if err != nil {
