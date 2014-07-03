@@ -305,8 +305,6 @@ func readfull(fp io.Reader, buf []byte) (int, error) {
 //. Base64 decoder
 
 var (
-	list = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"
-
 	index = []uint64{
 		99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
 		99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99, 99,
