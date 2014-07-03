@@ -152,7 +152,7 @@ func NewReader(rs io.ReadSeeker) (*Reader, error) {
 	}
 
 	if h[2] != 8 {
-		return nil, fmt.Errorf("Unknown compression method:", h[2])
+		return nil, fmt.Errorf("Unknown compression method: %v", h[2])
 	}
 
 	flg := h[3]
@@ -220,7 +220,7 @@ func NewReader(rs io.ReadSeeker) (*Reader, error) {
 	version := int(metadata[0]) + 256*int(metadata[1])
 
 	if version != 1 {
-		return nil, fmt.Errorf("Unknown dictzip version:", version)
+		return nil, fmt.Errorf("Unknown dictzip version: %v", version)
 	}
 
 	dz.blocksize = int64(metadata[2]) + 256*int64(metadata[3])
@@ -238,11 +238,23 @@ func NewReader(rs io.ReadSeeker) (*Reader, error) {
 
 func (dz *Reader) Get(start, size int64) ([]byte, error) {
 
-	dz.lock.Lock()
-	defer dz.lock.Unlock()
+	if size == 0 {
+		return []byte{}, nil
+	}
+
+	if start < 0 || size < 0 {
+		return nil, fmt.Errorf("Negative start or size")
+	}
+
+	if int(start/dz.blocksize) >= len(dz.offsets) {
+		return nil, fmt.Errorf("Start passed end of archive")
+	}
 
 	start1 := dz.blocksize * (start / dz.blocksize)
 	size1 := size + (start - start1)
+
+	dz.lock.Lock()
+	defer dz.lock.Unlock()
 
 	_, err := dz.fp.Seek(dz.offsets[start/dz.blocksize], 0)
 	if err != nil {
@@ -259,7 +271,7 @@ func (dz *Reader) Get(start, size int64) ([]byte, error) {
 	return data[start-start1:], nil
 }
 
-// Using start and size in base64 notation, such as used by the dictunzip program.
+// Start and size in base64 notation, such as used by the dictunzip program.
 func (dz *Reader) GetB64(start, size string) ([]byte, error) {
 	start2, err := decode(start)
 	if err != nil {
