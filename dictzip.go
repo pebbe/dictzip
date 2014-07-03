@@ -8,14 +8,14 @@ import (
 	"runtime"
 )
 
-type DictZip struct {
+type Reader struct {
 	fp        *os.File
 	offsets   []int64
 	blocksize int64
 	opened    bool
 }
 
-func (dz *DictZip) Close() error {
+func (dz *Reader) Close() error {
 	if dz.opened {
 		dz.opened = false
 		return dz.fp.Close()
@@ -23,7 +23,7 @@ func (dz *DictZip) Close() error {
 	return nil
 }
 
-func (dz *DictZip) GetB64(start, size string) ([]byte, error) {
+func (dz *Reader) GetB64(start, size string) ([]byte, error) {
 	start2, err := decode(start)
 	if err != nil {
 		return nil, err
@@ -35,7 +35,7 @@ func (dz *DictZip) GetB64(start, size string) ([]byte, error) {
 	return dz.Get(start2, size2)
 }
 
-func (dz *DictZip) Get(start, size int64) ([]byte, error) {
+func (dz *Reader) Get(start, size int64) ([]byte, error) {
 
 	start1 := dz.blocksize * (start / dz.blocksize)
 	size1 := size + (start - start1)
@@ -51,9 +51,9 @@ func (dz *DictZip) Get(start, size int64) ([]byte, error) {
 	return data[start-start1:], nil
 }
 
-func NewDictZip(filename string) (*DictZip, error) {
+func NewReader(filename string) (*Reader, error) {
 
-	dz := &DictZip{}
+	dz := &Reader{}
 
 	metadata := []byte{}
 
@@ -167,7 +167,7 @@ func NewDictZip(filename string) (*DictZip, error) {
 		dz.offsets[i+1] = dz.offsets[i] + int64(metadata[6+2*i]) + 256*int64(metadata[7+2*i])
 	}
 
-	runtime.SetFinalizer(dz, (*DictZip).Close)
+	runtime.SetFinalizer(dz, (*Reader).Close)
 
 	return dz, nil
 
