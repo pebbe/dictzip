@@ -129,6 +129,7 @@ func Write(r io.Reader, filename string, level int) error {
 
 //. Reader
 
+// This implements the io.ReaderAt interface.
 type Reader struct {
 	fp        io.ReadSeeker
 	offsets   []int64
@@ -243,6 +244,22 @@ func NewReader(rs io.ReadSeeker) (*Reader, error) {
 
 	return dz, nil
 
+}
+
+func (dz *Reader) ReadAt(p []byte, off int64) (n int, err error) {
+	want := len(p)
+	b, err := dz.Get(off, int64(want))
+	if b != nil {
+		got := len(b)
+		copy(p, b)
+		if want == got {
+			return got, nil
+		} else {
+			return got, err
+		}
+	} else {
+		return 0, err
+	}
 }
 
 func (dz *Reader) Get(start, size int64) ([]byte, error) {
