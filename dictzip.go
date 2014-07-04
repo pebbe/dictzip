@@ -6,12 +6,13 @@ package dictzip
 //. Imports
 
 import (
-	"bytes"
 	"compress/flate"
 	"fmt"
 	"hash/crc32"
 	"io"
+	"io/ioutil"
 	"os"
+	"path"
 	"sync"
 	"time"
 )
@@ -25,17 +26,27 @@ func Write(r io.Reader, filename string, level int) error {
 
 	const blocksize = 58315
 
-	crc := crc32.NewIEEE()
-	isize := 0
-
-	var buf bytes.Buffer
-	fw, err := flate.NewWriter(&buf, level)
+	dirname := path.Dir(filename)
+	root := path.Base(filename)
+	fptmp, err := ioutil.TempFile(dirname, root)
 	if err != nil {
 		return err
 	}
-	sizes := make([]int, 0)
+	defer func(name string) {
+		fptmp.Close()
+		os.Remove(name)
+	}(fptmp.Name())
+
+	crc := crc32.NewIEEE()
+	isize := 0
+
+	fw, err := flate.NewWriter(fptmp, level)
+	if err != nil {
+		return err
+	}
+	sizes := make([]int64, 0)
 	b := make([]byte, blocksize)
-	total := 0
+	total := int64(0)
 	eof := false
 	for !eof {
 		n, err := readfull(r, b)
@@ -52,9 +63,10 @@ func Write(r io.Reader, filename string, level int) error {
 
 			fw.Write(b[:n])
 			fw.Flush()
-			fw.Reset(&buf)
+			fw.Reset(fptmp)
 
-			l := buf.Len()
+			s, _ := fptmp.Stat()
+			l := s.Size()
 			sizes = append(sizes, l-total)
 			total = l
 		}
@@ -100,10 +112,8 @@ func Write(r io.Reader, filename string, level int) error {
 		}
 	}
 
-	_, err = fp.Write(buf.Bytes())
-	if err != nil {
-		return err
-	}
+	fptmp.Seek(0, 0)
+	io.Copy(fp, fptmp)
 
 	c := crc.Sum32()
 	_, err = fp.Write([]byte{
@@ -115,7 +125,6 @@ func Write(r io.Reader, filename string, level int) error {
 	}
 
 	return nil
-
 }
 
 //. Reader
